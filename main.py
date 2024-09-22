@@ -1,23 +1,36 @@
 from datetime import date
+from typing import List
+
+
 from flask import Flask, abort, render_template, redirect, url_for, flash, request
+from flask_ckeditor.utils import cleanify
 from flask_bootstrap import Bootstrap5
 from flask_ckeditor import CKEditor
 from flask_gravatar import Gravatar
 from flask_login import UserMixin, login_user, LoginManager, current_user, logout_user, login_required
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import relationship, DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Integer, String, Text
+from sqlalchemy import Integer, String, Text, ForeignKey
 from functools import wraps
 from werkzeug.security import generate_password_hash, check_password_hash
 # Import your forms from the forms.py
 from forms import CreatePostForm
 from forms import CreateUserForm
 from forms import LoginForm
+from forms import CommentForm
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = '8BYkEfBA6O6donzWlSihBXox7C0sKR6b'
 ckeditor = CKEditor(app)
 Bootstrap5(app)
+gravatar = Gravatar(app,
+                    size=100,
+                    rating='g',
+                    default='retro',
+                    force_default=False,
+                    force_lower=False,
+                    use_ssl=False,
+                    base_url=None)
 
 # TODO: Configure Flask-Login
 login_manager = LoginManager()
@@ -45,17 +58,33 @@ class BlogPost(db.Model):
     subtitle: Mapped[str] = mapped_column(String(250), nullable=False)
     date: Mapped[str] = mapped_column(String(250), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
-    author: Mapped[str] = mapped_column(String(250), nullable=False)
+    author: Mapped["User"] = relationship(back_populates="posts")
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     img_url: Mapped[str] = mapped_column(String(250), nullable=False)
+    comments: Mapped[List["Comment"]] = relationship(back_populates="parent_post")
+
 
 
 # TODO: Create a User table for all your registered users.
 
 class User(db.Model, UserMixin):
+    __tablename__ = 'users'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(250), nullable=False)
     email: Mapped[str] = mapped_column(String(250), nullable=False)
     password: Mapped[str] = mapped_column(String(250), nullable=False)
+    posts: Mapped[List["BlogPost"]] = relationship(back_populates="author")
+    comments: Mapped[List["Comment"]] = relationship(back_populates="user")
+
+
+class Comment(db.Model):
+    __tablename__ = 'comments'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    text: Mapped[str] = mapped_column(String(250), nullable=False)
+    user: Mapped["User"] = relationship(back_populates="comments")
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    parent_post: Mapped["BlogPost"] = relationship(back_populates="comments")
+    post_id: Mapped[int] = mapped_column(ForeignKey("blog_posts.id"))
 
 
 with app.app_context():
@@ -121,10 +150,22 @@ def get_all_posts():
 
 
 # TODO: Allow logged-in users to comment on posts
-@app.route("/post/<int:post_id>")
+@app.route("/post/<int:post_id>", methods = ["GET","POST"])
 def show_post(post_id):
     requested_post = db.get_or_404(BlogPost, post_id)
-    return render_template("post.html", post=requested_post)
+    coform = CommentForm()
+    if coform.validate_on_submit() and request.method == "POST":
+        if not current_user.is_authenticated:
+            flash("Log in to comment.")
+            return redirect(url_for('login'))
+        else:
+            text = cleanify(request.form.get('comment'))
+            new_comment = Comment(text = text, user = current_user, parent_post = requested_post)
+            db.session.add(new_comment)
+            db.session.commit()
+            return redirect(url_for('show_post', post_id = post_id))
+
+    return render_template("post.html", post=requested_post, form = coform)
 
 
 def admin_required(func):
@@ -149,7 +190,7 @@ def add_new_post():
             subtitle=form.subtitle.data,
             body=form.body.data,
             img_url=form.img_url.data,
-            author=current_user.name,
+            author=current_user,
             date=date.today().strftime("%B %d, %Y")
         )
         db.session.add(new_post)
@@ -174,7 +215,7 @@ def edit_post(post_id):
         post.title = edit_form.title.data
         post.subtitle = edit_form.subtitle.data
         post.img_url = edit_form.img_url.data
-        post.author = current_user.name
+        post.author = current_user
         post.body = edit_form.body.data
         db.session.commit()
         return redirect(url_for("show_post", post_id=post.id))
@@ -202,4 +243,4 @@ def contact():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=5000)
