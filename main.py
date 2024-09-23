@@ -2,7 +2,6 @@ from datetime import date
 from typing import List
 import os
 
-
 from flask import Flask, abort, render_template, redirect, url_for, flash, request
 from flask_ckeditor.utils import cleanify
 from flask_bootstrap import Bootstrap5
